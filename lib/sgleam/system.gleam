@@ -10,6 +10,21 @@ pub fn show_svg(svg: String) -> Nil
 @external(javascript, "../sgleam/sgleam_ffi.mjs", "get_key_event")
 pub fn get_key_event() -> List(String)
 
+@external(javascript, "../sgleam/sgleam_ffi.mjs", "get_pad_event")
+pub fn get_pad_event() -> List(String)
+
+@external(javascript, "../sgleam/sgleam_ffi.mjs", "start_mworld")
+pub fn start_mworld(min_players: Int, max_players: Int, tick_rate: Int) -> Nil
+
+@external(javascript, "../sgleam/sgleam_ffi.mjs", "get_mworld_event")
+pub fn get_mworld_event() -> List(String)
+
+@external(javascript, "../sgleam/sgleam_ffi.mjs", "show_player_svg")
+pub fn show_player_svg(player_index: Int, svg: String) -> Nil
+
+@external(javascript, "../sgleam/sgleam_ffi.mjs", "stop_mworld")
+pub fn stop_mworld() -> Nil
+
 /// Returns #(width, height, x_offset, y_offset) for a piece of text. The css is
 /// the whole font shorthand, size and all, and the host measures with it as it
 /// comes.

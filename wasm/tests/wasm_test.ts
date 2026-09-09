@@ -57,6 +57,16 @@ const KEYPRESS = 0;
 const KEYDOWN = 1;
 const KEYUP = 2;
 const KEYNONE = 3;
+const PADDOWN = 0;
+const PADUP = 1;
+const PADNONE = 2;
+const MWORLD_JOIN = 0;
+const MWORLD_LEAVE = 1;
+const MWORLD_TICK = 2;
+const MWORLD_KEYDOWN = 4;
+const MWORLD_PADDOWN = 6;
+const MWORLD_CLOSE = 8;
+const MWORLD_NONE = 9;
 
 interface EnvKeyEvent {
   type: number;
@@ -68,9 +78,38 @@ interface EnvKeyEvent {
   repeat?: boolean;
 }
 
+interface EnvPadEvent {
+  type: number;
+  input: string;
+}
+
+interface EnvMworldEvent {
+  type: number;
+  player?: number;
+  value?: string;
+  alt?: boolean;
+  ctrl?: boolean;
+  shift?: boolean;
+  meta?: boolean;
+  repeat?: boolean;
+}
+
+interface MworldStart {
+  minPlayers: number;
+  maxPlayers: number;
+  tickRate: number;
+}
+
+interface PlayerSvg {
+  player: number;
+  svg: string;
+}
+
 interface EnvOptions {
   interruptAfter?: number;
   keyEvents?: EnvKeyEvent[];
+  padEvents?: EnvPadEvent[];
+  mworldEvents?: EnvMworldEvent[];
 }
 
 // Fake clock, advanced by sleep so the world loop's scheduling fires ticks
@@ -84,12 +123,17 @@ interface FakeClock {
 function makeEnv(
   getBuffer: () => ArrayBufferLike,
   svgs: string[],
+  mworldStarts: MworldStart[],
+  playerSvgs: PlayerSvg[],
+  mworldStops: boolean[],
   clock: FakeClock,
   options: EnvOptions = {},
 ): WebAssembly.ModuleImports {
   let interruptCount = 0;
   const interruptAfter = options.interruptAfter ?? Infinity;
   const keyEvents = [...(options.keyEvents ?? [])];
+  const padEvents = [...(options.padEvents ?? [])];
+  const mworldEvents = [...(options.mworldEvents ?? [])];
 
   return {
     check_interrupt: (): number => {
@@ -128,6 +172,78 @@ function makeEnv(
       }
       return event.type;
     },
+    get_pad_event: (ptr: number, len: number): number => {
+      const event = padEvents.shift();
+      if (!event) {
+        return PADNONE;
+      }
+      const b = new Uint8Array(getBuffer() as ArrayBuffer);
+      const input = encoder.encode(event.input);
+      const writeStart = Math.max(0, ptr);
+      const writeEnd = Math.min(b.length, ptr + Math.max(0, len));
+      if (writeStart < writeEnd) {
+        b.fill(0, writeStart, writeEnd);
+        b.set(input.subarray(0, writeEnd - writeStart), writeStart);
+      }
+      return event.type;
+    },
+    start_mworld: (
+      minPlayers: bigint,
+      maxPlayers: bigint,
+      tickRate: bigint,
+    ): void => {
+      mworldStarts.push({
+        minPlayers: Number(minPlayers),
+        maxPlayers: Number(maxPlayers),
+        tickRate: Number(tickRate),
+      });
+    },
+    get_mworld_event: (
+      playerPtr: number,
+      valuePtr: number,
+      valueLen: number,
+      mods: number,
+    ): number => {
+      const event = mworldEvents.shift();
+      if (!event) {
+        return MWORLD_NONE;
+      }
+      const buffer = getBuffer() as ArrayBuffer;
+      const b = new Uint8Array(buffer);
+      new DataView(buffer).setBigUint64(
+        playerPtr,
+        BigInt(event.player ?? 0),
+        true,
+      );
+      const value = encoder.encode(event.value ?? "");
+      const writeStart = Math.max(0, valuePtr);
+      const writeEnd = Math.min(
+        b.length,
+        valuePtr + Math.max(0, valueLen),
+      );
+      if (writeStart < writeEnd) {
+        b.fill(0, writeStart, writeEnd);
+        b.set(value.subarray(0, writeEnd - writeStart), writeStart);
+      }
+      if (mods >= 0 && mods + 4 < b.length) {
+        b[mods + 0] = event.alt ? 1 : 0;
+        b[mods + 1] = event.ctrl ? 1 : 0;
+        b[mods + 2] = event.shift ? 1 : 0;
+        b[mods + 3] = event.meta ? 1 : 0;
+        b[mods + 4] = event.repeat ? 1 : 0;
+      }
+      return event.type;
+    },
+    draw_player_svg: (player: bigint, ptr: number, len: number): void => {
+      const b = new Uint8Array(getBuffer() as ArrayBuffer);
+      playerSvgs.push({
+        player: Number(player),
+        svg: decoder.decode(b.slice(ptr, ptr + len)),
+      });
+    },
+    stop_mworld: (): void => {
+      mworldStops.push(true);
+    },
     text_metrics: (
       _text: number,
       _textLen: number,
@@ -154,18 +270,26 @@ interface WasmContext {
   stdout: string[];
   stderr: string[];
   svgs: string[];
+  mworldStarts: MworldStart[];
+  playerSvgs: PlayerSvg[];
+  mworldStops: boolean[];
 }
 
 interface LoadOptions {
   bigint?: boolean;
   interruptAfter?: number;
   keyEvents?: EnvKeyEvent[];
+  padEvents?: EnvPadEvent[];
+  mworldEvents?: EnvMworldEvent[];
 }
 
 async function loadWasm(options: LoadOptions = {}): Promise<WasmContext> {
   const stdout: string[] = [];
   const stderr: string[] = [];
   const svgs: string[] = [];
+  const mworldStarts: MworldStart[] = [];
+  const playerSvgs: PlayerSvg[] = [];
+  const mworldStops: boolean[] = [];
 
   const wasmPath = new URL(
     "../../target/wasm32-wasip1/release-small/sgleam.wasm",
@@ -191,10 +315,15 @@ async function loadWasm(options: LoadOptions = {}): Promise<WasmContext> {
   const env = makeEnv(
     () => exports.memory.buffer,
     svgs,
+    mworldStarts,
+    playerSvgs,
+    mworldStops,
     clock,
     {
       interruptAfter: options.interruptAfter,
       keyEvents: options.keyEvents,
+      padEvents: options.padEvents,
+      mworldEvents: options.mworldEvents,
     },
   );
 
@@ -205,7 +334,15 @@ async function loadWasm(options: LoadOptions = {}): Promise<WasmContext> {
 
   exports = instance.exports as unknown as WasmExports;
 
-  return { exports, stdout, stderr, svgs };
+  return {
+    exports,
+    stdout,
+    stderr,
+    svgs,
+    mworldStarts,
+    playerSvgs,
+    mworldStops,
+  };
 }
 
 // --- Helper ---
@@ -396,6 +533,111 @@ pub fn draw(_seen: Int) -> image.Image {
 }
 `;
 }
+
+const PAD_HANDLERS = `import gleam/io
+import gleam/string
+import sgleam/image
+import sgleam/stroke
+import sgleam/world
+
+pub fn main() {
+  world.create(0, draw)
+  |> world.on_pad_down(handler("down"))
+  |> world.on_pad_up(handler("up"))
+  |> world.stop_when(fn(handled) { handled == 2 })
+  |> world.run()
+}
+
+pub fn draw(_handled: Int) -> image.Image {
+  image.circle(20, stroke.red)
+}
+
+fn handler(name: String) -> fn(Int, world.PadInput) -> Int {
+  fn(handled, input) {
+    io.println(name <> " " <> string.inspect(input))
+    handled + 1
+  }
+}
+`;
+
+const MWORLD_SQUARES = `import gleam/io
+import sgleam/fill
+import sgleam/image
+import sgleam/mworld
+import sgleam/world
+
+pub type State {
+  State(left_x: Int, right_x: Int, ticks: Int)
+}
+
+pub fn main() {
+  mworld.create(State(100, 200, 0), min: 2, max: 2, to_image: draw)
+  |> mworld.tick_rate(1000)
+  |> mworld.on_tick(fn(state) {
+    io.println("tick")
+    State(..state, ticks: state.ticks + 1)
+  })
+  |> mworld.on_key_down(move_with_key)
+  |> mworld.on_pad_down(move_with_pad)
+  |> mworld.stop_when(fn(state) { state.left_x == 90 })
+  |> mworld.run()
+}
+
+pub fn draw(state: State, player: mworld.Player) -> image.Image {
+  let x = case mworld.player_index(player) {
+    1 -> state.left_x + state.ticks
+    _ -> state.right_x + state.ticks
+  }
+  image.empty_scene(300, 100)
+  |> image.place_image(x, 50, image.square(20, fill.red))
+}
+
+pub fn move_with_pad(
+  state: State,
+  player: mworld.Player,
+  input: mworld.PadInput,
+) -> State {
+  case mworld.player_index(player), input {
+    1, input if input == mworld.left -> State(..state, left_x: 90)
+    _, _ -> state
+  }
+}
+
+pub fn move_with_key(
+  state: State,
+  player: mworld.Player,
+  key: mworld.Key,
+) -> State {
+  case mworld.player_index(player), key {
+    2, world.ArrowLeft -> State(..state, right_x: 190)
+    _, _ -> state
+  }
+}
+`;
+
+const MWORLD_LIFECYCLE = `import gleam/int
+import gleam/io
+import sgleam/image
+import sgleam/mworld
+import sgleam/stroke
+
+pub fn main() {
+  mworld.create(0, min: 1, max: 2, to_image: draw)
+  |> mworld.on_player_join(fn(count, player) {
+    io.println("join " <> int.to_string(mworld.player_index(player)))
+    count + 1
+  })
+  |> mworld.on_player_leave(fn(count, player) {
+    io.println("leave " <> int.to_string(mworld.player_index(player)))
+    count - 1
+  })
+  |> mworld.run()
+}
+
+pub fn draw(count: Int, _player: mworld.Player) -> image.Image {
+  image.circle(20 + count, stroke.red)
+}
+`;
 
 const ANIMATE = `import gleam/int
 import gleam/io
@@ -646,6 +888,91 @@ Deno.test("every key name decodes to its Key", async () => {
     .map((k) => `${k}\n`)
     .join("");
   assertEquals(r.stdout, expected, `stderr:\n${r.stderr}`);
+  destroy(ctx);
+});
+
+Deno.test("on_pad_down and on_pad_up take their own events", async () => {
+  const ctx = await newRepl(PAD_HANDLERS, {
+    interruptAfter: 200_000,
+    padEvents: [
+      { type: PADDOWN, input: "Left" },
+      { type: PADUP, input: "ActionA" },
+    ],
+  });
+  const r = run(ctx, "main()");
+  assertEquals(r.stdout, "down Left\nup ActionA\nNil\n");
+  // The first state, one per handled event, and the one stop_when draws.
+  assertEquals(r.svgs.length, 4, `stderr:\n${r.stderr}`);
+  destroy(ctx);
+});
+
+Deno.test("mworld shares state and renders a view per player", async () => {
+  const ctx = await newRepl(MWORLD_SQUARES, {
+    interruptAfter: 200_000,
+    mworldEvents: [
+      { type: MWORLD_JOIN, player: 1 },
+      // A tick before min_players is reached must not change the state.
+      { type: MWORLD_TICK },
+      { type: MWORLD_JOIN, player: 2 },
+      { type: MWORLD_TICK },
+      {
+        type: MWORLD_KEYDOWN,
+        player: 2,
+        value: "ArrowLeft",
+        shift: true,
+      },
+      // An input cannot act as a player that has not joined.
+      { type: MWORLD_KEYDOWN, player: 3, value: "ArrowLeft" },
+      { type: MWORLD_PADDOWN, player: 1, value: "Left" },
+      { type: MWORLD_CLOSE },
+    ],
+  });
+  assertEquals(
+    ctx.repl !== 0,
+    true,
+    `mworld source did not compile: ${ctx.stderr.join("")}`,
+  );
+  const r = run(ctx, "main()");
+  assertEquals(r.result, REPL_OK, `stderr: ${r.stderr}`);
+  assertEquals(r.stdout, "tick\nNil\n");
+  assertEquals(ctx.mworldStarts, [{
+    minPlayers: 2,
+    maxPlayers: 2,
+    tickRate: 100,
+  }]);
+  assertEquals(ctx.mworldStops.length, 1);
+  assertEquals(
+    ctx.playerSvgs.map((frame) => frame.player),
+    [1, 1, 2, 1, 2, 1, 2, 1, 2],
+  );
+  assertEquals(
+    ctx.playerSvgs[4].svg !== ctx.playerSvgs[6].svg,
+    true,
+    "expected player 2's key event to update the shared world",
+  );
+  assertEquals(
+    ctx.playerSvgs[7].svg !== ctx.playerSvgs[8].svg,
+    true,
+    "expected the two players to receive different views",
+  );
+  destroy(ctx);
+});
+
+Deno.test("mworld handles join, leave, and close", async () => {
+  const ctx = await newRepl(MWORLD_LIFECYCLE, {
+    interruptAfter: 200_000,
+    mworldEvents: [
+      { type: MWORLD_JOIN, player: 1 },
+      { type: MWORLD_JOIN, player: 2 },
+      { type: MWORLD_LEAVE, player: 1 },
+      { type: MWORLD_CLOSE },
+    ],
+  });
+  const r = run(ctx, "main()");
+  assertEquals(r.result, REPL_OK, `stderr: ${r.stderr}`);
+  assertEquals(r.stdout, "join 1\njoin 2\nleave 1\nNil\n");
+  assertEquals(ctx.playerSvgs.map((frame) => frame.player), [1, 1, 2, 2]);
+  assertEquals(ctx.mworldStops.length, 1);
   destroy(ctx);
 });
 

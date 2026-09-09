@@ -222,6 +222,11 @@ fn add_sgleam(ctx: &Ctx) -> Result<()> {
     {
         set_fn(&sgleam, "draw_svg", crate::host::draw_svg)?;
         set_fn(&sgleam, "get_key_event", crate::host::get_key_event)?;
+        set_fn(&sgleam, "get_pad_event", crate::host::get_pad_event)?;
+        set_fn(&sgleam, "start_mworld", crate::host::start_mworld)?;
+        set_fn(&sgleam, "get_mworld_event", crate::host::get_mworld_event)?;
+        set_fn(&sgleam, "show_player_svg", crate::host::draw_player_svg)?;
+        set_fn(&sgleam, "stop_mworld", crate::host::stop_mworld)?;
     }
     set_fn(&sgleam, "text_metrics", |text: String, font_css: String| {
         List(text_metrics(text, font_css))
