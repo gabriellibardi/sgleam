@@ -14,7 +14,7 @@ Um programa interativo é definido por:
 
 1. **Estado inicial**: qualquer valor Gleam
 2. **Função de desenho**: transforma o estado em uma imagem
-3. **Funções de evento** (opcionais): atualizam o estado em resposta a ticks do relógio ou teclas pressionadas
+3. **Funções de evento** (opcionais): atualizam o estado em resposta a ticks do relógio, teclado ou pad virtual
 4. **Condição de parada** (opcional): define quando o programa deve parar
 
 
@@ -156,6 +156,18 @@ world.on_key_up(world, fn(a, Key) -> a)
 ```
 Tecla solta.
 
+### Eventos do pad virtual
+
+```gleam
+world.on_pad_down(world, fn(a, PadInput) -> a)
+```
+Botão do pad pressionado.
+
+```gleam
+world.on_pad_up(world, fn(a, PadInput) -> a)
+```
+Botão do pad solto.
+
 ### Execução
 
 ```gleam
@@ -176,3 +188,60 @@ As teclas são representadas pelo tipo `world.Key`{.gleam}:
 | Letras/números | `Char("a")`{.gleam}, `Char("1")`{.gleam}, etc. |
 | Funções | `F1`{.gleam} a `F12`{.gleam} |
 | Outros | `Backspace`{.gleam}, `Tab`{.gleam}, `Delete`{.gleam}, `Home`{.gleam}, `End`{.gleam}, `PageUp`{.gleam}, `PageDown`{.gleam} |
+
+### Entradas do pad
+
+O tipo `world.PadInput`{.gleam} oferece `Up`{.gleam}, `Down`{.gleam},
+`Left`{.gleam}, `Right`{.gleam}, `ActionA`{.gleam} e
+`ActionB`{.gleam}. As constantes minúsculas `world.up`{.gleam},
+`world.down`{.gleam}, `world.left`{.gleam}, `world.right`{.gleam},
+`world.action_a`{.gleam} e `world.action_b`{.gleam} representam as mesmas
+entradas.
+
+
+## Mundos multijogador
+
+O módulo `sgleam/mworld`{.gleam} mantém um único estado compartilhado para a
+partida. Cada evento de entrada informa o jogador que o produziu, e a função
+de desenho recebe um `mworld.Player`{.gleam} para produzir a visão daquele
+participante.
+
+```gleam
+import sgleam/image
+import sgleam/mworld
+
+pub fn main() {
+  mworld.create(
+    estado_inicial,
+    min: 2,
+    max: 4,
+    to_image: desenhar,
+  )
+  |> mworld.on_key_down(tecla)
+  |> mworld.on_pad_down(pad)
+  |> mworld.run()
+}
+
+fn desenhar(estado, jogador: mworld.Player) -> image.Image {
+  // Pode usar mworld.player_index(jogador) para escolher a perspectiva.
+  todo
+}
+
+fn tecla(estado, jogador: mworld.Player, tecla: mworld.Key) {
+  todo
+}
+
+fn pad(estado, jogador: mworld.Player, entrada: mworld.PadInput) {
+  todo
+}
+```
+
+`mworld.on_tick`{.gleam} e `mworld.stop_when`{.gleam} operam sobre o estado
+compartilhado. `mworld.on_player_join`{.gleam} e
+`mworld.on_player_leave`{.gleam} tratam o ciclo de vida dos participantes.
+Use `mworld.player_index`{.gleam} para obter o índice estável de um jogador e
+`mworld.same_player`{.gleam} para comparar duas identidades.
+
+No modo multijogador, o host controla a fila ordenada de eventos, informa
+entradas e conexões e envia os ticks ao mundo. O jogo devolve ao host um SVG
+para cada jogador conectado sempre que o estado muda.
