@@ -57,13 +57,28 @@ const min_tick_rate = 1
 
 const max_tick_rate = 100
 
+const default_tick_rate = 28
+
 const event_polling_delay = 10
 
-// Multiplayer specialization of the same base used by world.World. The
-// state is shared by the match; only to_image receives a player so it can
-// produce a different view for each participant.
 pub opaque type MultiWorld(a) {
-  MultiWorld(single_world.BaseWorld(a, Player))
+  MultiWorld(
+    state: a,
+    to_image: ToImage(a),
+    rate: Int,
+    min_players: Int,
+    max_players: Int,
+    players: List(Player),
+    on_tick: Option(OnTick(a)),
+    stop_when: Option(StopWhen(a)),
+    on_key_press: Option(OnKey(a)),
+    on_key_down: Option(OnKey(a)),
+    on_key_up: Option(OnKey(a)),
+    on_pad_down: Option(OnPad(a)),
+    on_pad_up: Option(OnPad(a)),
+    on_player_join: Option(OnPlayerEvent(a)),
+    on_player_leave: Option(OnPlayerEvent(a)),
+  )
 }
 
 pub fn create(
@@ -72,76 +87,76 @@ pub fn create(
   max max_players: Int,
   to_image to_image: ToImage(a),
 ) -> MultiWorld(a) {
+  let min_players = int.max(1, min_players)
+  let max_players = int.max(min_players, max_players)
   MultiWorld(
-    single_world.base_world(state, to_image, min_players, max_players, []),
+    state:,
+    to_image:,
+    rate: default_tick_rate,
+    min_players:,
+    max_players:,
+    players: [],
+    on_tick: None,
+    stop_when: None,
+    on_key_press: None,
+    on_key_down: None,
+    on_key_up: None,
+    on_pad_down: None,
+    on_pad_up: None,
+    on_player_join: None,
+    on_player_leave: None,
   )
 }
 
 pub fn tick_rate(world: MultiWorld(a), rate: Int) -> MultiWorld(a) {
-  let MultiWorld(base) = world
-  MultiWorld(
-    single_world.BaseWorld(
-      ..base,
-      rate: int.clamp(rate, min_tick_rate, max_tick_rate),
-    ),
-  )
+  MultiWorld(..world, rate: int.clamp(rate, min_tick_rate, max_tick_rate))
 }
 
 pub fn on_tick(world: MultiWorld(a), handler: OnTick(a)) -> MultiWorld(a) {
-  let MultiWorld(base) = world
-  MultiWorld(single_world.BaseWorld(..base, on_tick: Some(handler)))
+  MultiWorld(..world, on_tick: Some(handler))
 }
 
 pub fn stop_when(world: MultiWorld(a), handler: StopWhen(a)) -> MultiWorld(a) {
-  let MultiWorld(base) = world
-  MultiWorld(single_world.BaseWorld(..base, stop_when: Some(handler)))
+  MultiWorld(..world, stop_when: Some(handler))
 }
 
 pub fn on_key_press(world: MultiWorld(a), handler: OnKey(a)) -> MultiWorld(a) {
-  let MultiWorld(base) = world
-  MultiWorld(single_world.BaseWorld(..base, on_key_press: Some(handler)))
+  MultiWorld(..world, on_key_press: Some(handler))
 }
 
 pub fn on_key_down(world: MultiWorld(a), handler: OnKey(a)) -> MultiWorld(a) {
-  let MultiWorld(base) = world
-  MultiWorld(single_world.BaseWorld(..base, on_key_down: Some(handler)))
+  MultiWorld(..world, on_key_down: Some(handler))
 }
 
 pub fn on_key_up(world: MultiWorld(a), handler: OnKey(a)) -> MultiWorld(a) {
-  let MultiWorld(base) = world
-  MultiWorld(single_world.BaseWorld(..base, on_key_up: Some(handler)))
+  MultiWorld(..world, on_key_up: Some(handler))
 }
 
 pub fn on_pad_down(world: MultiWorld(a), handler: OnPad(a)) -> MultiWorld(a) {
-  let MultiWorld(base) = world
-  MultiWorld(single_world.BaseWorld(..base, on_pad_down: Some(handler)))
+  MultiWorld(..world, on_pad_down: Some(handler))
 }
 
 pub fn on_pad_up(world: MultiWorld(a), handler: OnPad(a)) -> MultiWorld(a) {
-  let MultiWorld(base) = world
-  MultiWorld(single_world.BaseWorld(..base, on_pad_up: Some(handler)))
+  MultiWorld(..world, on_pad_up: Some(handler))
 }
 
 pub fn on_player_join(
   world: MultiWorld(a),
   handler: OnPlayerEvent(a),
 ) -> MultiWorld(a) {
-  let MultiWorld(base) = world
-  MultiWorld(single_world.BaseWorld(..base, on_player_join: Some(handler)))
+  MultiWorld(..world, on_player_join: Some(handler))
 }
 
 pub fn on_player_leave(
   world: MultiWorld(a),
   handler: OnPlayerEvent(a),
 ) -> MultiWorld(a) {
-  let MultiWorld(base) = world
-  MultiWorld(single_world.BaseWorld(..base, on_player_leave: Some(handler)))
+  MultiWorld(..world, on_player_leave: Some(handler))
 }
 
 pub fn run(world: MultiWorld(a)) {
-  let MultiWorld(base) = world
-  system.start_mworld(base.min_players, base.max_players, base.rate)
-  run_loop(base)
+  system.start_mworld(world.min_players, world.max_players, world.rate)
+  run_loop(world)
 }
 
 type RuntimeEvent {
@@ -157,99 +172,108 @@ type RuntimeEvent {
   NoEvent
 }
 
-fn run_loop(base: single_world.BaseWorld(a, Player)) {
+fn run_loop(world: MultiWorld(a)) {
   let event = get_runtime_event()
-  let #(base, changed) = apply_event(base, event)
-  let stopped = base.stop_when |> option.map(fn(f) { f(base.state) })
+  let #(world, changed) = apply_event(world, event)
+  let stopped = world.stop_when |> option.map(fn(f) { f(world.state) })
   case event, stopped {
     Close, _ -> system.stop_mworld()
     _, Some(True) -> {
-      show_players(base)
+      show_players(world)
       system.stop_mworld()
     }
     _, _ -> {
       case changed {
-        True -> show_players(base)
+        True -> show_players(world)
         False -> Nil
       }
       case event {
         NoEvent -> system.sleep(event_polling_delay)
         _ -> Nil
       }
-      run_loop(base)
+      run_loop(world)
     }
   }
 }
 
 fn apply_event(
-  base: single_world.BaseWorld(a, Player),
+  world: MultiWorld(a),
   event: RuntimeEvent,
-) -> #(single_world.BaseWorld(a, Player), Bool) {
+) -> #(MultiWorld(a), Bool) {
   case event {
-    PlayerJoin(player) -> join_player(base, player)
-    PlayerLeave(player) -> leave_player(base, player)
+    PlayerJoin(player) -> join_player(world, player)
+    PlayerLeave(player) -> leave_player(world, player)
     Tick ->
-      case base.on_tick, list.length(base.players) >= base.min_players {
+      case world.on_tick, list.length(world.players) >= world.min_players {
         Some(handler), True -> #(
-          single_world.BaseWorld(..base, state: handler(base.state)),
+          MultiWorld(..world, state: handler(world.state)),
           True,
         )
-        _, _ -> #(base, False)
+        _, _ -> #(world, False)
       }
     KeyPress(player, key) ->
-      apply_player_handler(base, player, key, base.on_key_press)
+      apply_player_handler(world, player, key, world.on_key_press)
     KeyDown(player, key) ->
-      apply_player_handler(base, player, key, base.on_key_down)
+      apply_key_or_pad_handler(
+        world,
+        player,
+        key,
+        world.on_key_down,
+        world.on_pad_down,
+      )
     KeyUp(player, key) ->
-      apply_player_handler(base, player, key, base.on_key_up)
+      apply_key_or_pad_handler(
+        world,
+        player,
+        key,
+        world.on_key_up,
+        world.on_pad_up,
+      )
     PadDown(player, input) ->
-      apply_player_handler(base, player, input, base.on_pad_down)
+      apply_player_handler(world, player, input, world.on_pad_down)
     PadUp(player, input) ->
-      apply_player_handler(base, player, input, base.on_pad_up)
-    Close | NoEvent -> #(base, False)
+      apply_player_handler(world, player, input, world.on_pad_up)
+    Close | NoEvent -> #(world, False)
   }
 }
 
-fn join_player(
-  base: single_world.BaseWorld(a, Player),
-  player: Player,
-) -> #(single_world.BaseWorld(a, Player), Bool) {
-  let known = find_player(base.players, player.index)
-  case known, list.length(base.players) < base.max_players {
+fn join_player(world: MultiWorld(a), player: Player) -> #(MultiWorld(a), Bool) {
+  let known = find_player(world.players, player.index)
+  case known, list.length(world.players) < world.max_players {
     None, True -> {
-      let state = case base.on_player_join {
-        Some(handler) -> handler(base.state, player)
-        None -> base.state
+      let state = case world.on_player_join {
+        Some(handler) -> handler(world.state, player)
+        None -> world.state
       }
       #(
-        single_world.BaseWorld(
-          ..base,
+        MultiWorld(
+          ..world,
           state:,
-          players: list.append(base.players, [player]),
+          players: list.append(world.players, [player]),
         ),
         True,
       )
     }
-    _, _ -> #(base, False)
+    _, _ -> #(world, False)
   }
 }
 
 fn leave_player(
-  base: single_world.BaseWorld(a, Player),
+  world: MultiWorld(a),
   player: Player,
-) -> #(single_world.BaseWorld(a, Player), Bool) {
-  case find_player(base.players, player.index) {
-    None -> #(base, False)
+) -> #(MultiWorld(a), Bool) {
+  case find_player(world.players, player.index) {
+    None -> #(world, False)
     Some(player) -> {
-      let state = case base.on_player_leave {
-        Some(handler) -> handler(base.state, player)
-        None -> base.state
+      let state = case world.on_player_leave {
+        Some(handler) -> handler(world.state, player)
+        None -> world.state
       }
       #(
-        single_world.BaseWorld(
-          ..base,
+        MultiWorld(
+          ..world,
           state:,
-          players: list.filter(base.players, fn(current) {
+          players: list.filter(world.players, fn(current) {
             !same_player(current, player)
           }),
         ),
@@ -260,17 +284,31 @@ fn leave_player(
 }
 
 fn apply_player_handler(
-  base: single_world.BaseWorld(a, Player),
+  world: MultiWorld(a),
   player: Player,
   input: input,
   handler: Option(fn(a, Player, input) -> a),
-) -> #(single_world.BaseWorld(a, Player), Bool) {
-  case find_player(base.players, player.index), handler {
+) -> #(MultiWorld(a), Bool) {
+  case find_player(world.players, player.index), handler {
     Some(player), Some(handler) -> #(
-      single_world.BaseWorld(..base, state: handler(base.state, player, input)),
+      MultiWorld(..world, state: handler(world.state, player, input)),
       True,
     )
-    _, _ -> #(base, False)
+    _, _ -> #(world, False)
+  }
+}
+
+fn apply_key_or_pad_handler(
+  world: MultiWorld(a),
+  player: Player,
+  key: Key,
+  key_handler: Option(OnKey(a)),
+  pad_handler: Option(OnPad(a)),
+) -> #(MultiWorld(a), Bool) {
+  case single_world.pad_input_from_key(key), pad_handler {
+    Some(input), Some(handler) ->
+      apply_player_handler(world, player, input, Some(handler))
+    _, _ -> apply_player_handler(world, player, key, key_handler)
   }
 }
 
@@ -281,25 +319,25 @@ fn find_player(players: List(Player), index: Int) -> Option(Player) {
   }
 }
 
-fn show_players(base: single_world.BaseWorld(a, Player)) {
-  list.each(base.players, fn(player) {
-    base.to_image(base.state, player)
+fn show_players(world: MultiWorld(a)) {
+  list.each(world.players, fn(player) {
+    world.to_image(world.state, player)
     |> image.to_svg
     |> fn(svg) { system.show_player_svg(player.index, svg) }
   })
 }
 
 fn get_runtime_event() -> RuntimeEvent {
-  case system.get_mworld_event() {
+  case system.get_event() {
     ["join", player] -> parse_player(player, PlayerJoin)
     ["leave", player] -> parse_player(player, PlayerLeave)
     ["tick"] -> Tick
     ["keypress", player, key, ..] ->
-      parse_player_input(player, key_from_string(key), KeyPress)
+      parse_player_input(player, single_world.key_from_string(key), KeyPress)
     ["keydown", player, key, ..] ->
-      parse_player_input(player, key_from_string(key), KeyDown)
+      parse_player_input(player, single_world.key_from_string(key), KeyDown)
     ["keyup", player, key, ..] ->
-      parse_player_input(player, key_from_string(key), KeyUp)
+      parse_player_input(player, single_world.key_from_string(key), KeyUp)
     ["paddown", player, input] -> parse_pad_event(player, input, PadDown)
     ["padup", player, input] -> parse_pad_event(player, input, PadUp)
     ["close"] -> Close
@@ -333,61 +371,8 @@ fn parse_pad_event(
   input: String,
   event: fn(Player, PadInput) -> RuntimeEvent,
 ) -> RuntimeEvent {
-  case pad_input_from_string(input) {
+  case single_world.pad_input_from_string(input) {
     Some(input) -> parse_player_input(player, input, event)
     None -> NoEvent
-  }
-}
-
-fn pad_input_from_string(input: String) -> Option(PadInput) {
-  case input {
-    "Up" -> Some(single_world.Up)
-    "Down" -> Some(single_world.Down)
-    "Left" -> Some(single_world.Left)
-    "Right" -> Some(single_world.Right)
-    "ActionA" -> Some(single_world.ActionA)
-    "ActionB" -> Some(single_world.ActionB)
-    _ -> None
-  }
-}
-
-fn key_from_string(key: String) -> Key {
-  case key {
-    "ArrowLeft" -> single_world.ArrowLeft
-    "ArrowRight" -> single_world.ArrowRight
-    "ArrowUp" -> single_world.ArrowUp
-    "ArrowDown" -> single_world.ArrowDown
-    "PageUp" -> single_world.PageUp
-    "PageDown" -> single_world.PageDown
-    "Home" -> single_world.Home
-    "End" -> single_world.End
-    "Backspace" -> single_world.Backspace
-    "Tab" -> single_world.Tab
-    "Enter" -> single_world.Enter
-    "Escape" -> single_world.Escape
-    "Delete" -> single_world.Delete
-    "Insert" -> single_world.Insert
-    "F1" -> single_world.F1
-    "F2" -> single_world.F2
-    "F3" -> single_world.F3
-    "F4" -> single_world.F4
-    "F5" -> single_world.F5
-    "F6" -> single_world.F6
-    "F7" -> single_world.F7
-    "F8" -> single_world.F8
-    "F9" -> single_world.F9
-    "F10" -> single_world.F10
-    "F11" -> single_world.F11
-    "F12" -> single_world.F12
-    "CapsLock" -> single_world.CapsLock
-    "NumLock" -> single_world.NumLock
-    "ScrollLock" -> single_world.ScrollLock
-    "PrintScreen" -> single_world.PrintScreen
-    "Pause" -> single_world.Pause
-    "Shift" -> single_world.Shift
-    "Control" -> single_world.Control
-    "Alt" -> single_world.Alt
-    "Meta" -> single_world.Meta
-    other -> single_world.Char(other)
   }
 }

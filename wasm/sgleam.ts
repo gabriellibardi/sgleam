@@ -95,10 +95,8 @@ async function loadWasm(
     check_interrupt: (): number => 0,
     sleep: (_ms: bigint): void => {},
     draw_svg: (): void => {},
-    get_key_event: (): number => 3, // EVENT_NONE
-    get_pad_event: (): number => 2, // EVENT_NONE
+    get_event: (): number => 9, // EVENT_NONE
     start_mworld: (): void => {},
-    get_mworld_event: (): number => 9, // EVENT_NONE
     draw_player_svg: (): void => {},
     stop_mworld: (): void => {},
     text_metrics: (

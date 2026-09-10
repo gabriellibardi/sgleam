@@ -1,5 +1,4 @@
 import gleam/int
-import gleam/list
 import gleam/option.{type Option, None, Some}
 import sgleam/image.{type Image}
 import sgleam/system
@@ -71,10 +70,6 @@ pub type KeyEventType {
   KeyUp
 }
 
-pub type PadEvent {
-  PadEvent(event_type: PadEventType, input: PadInput)
-}
-
 pub type PadInput {
   Up
   Down
@@ -95,11 +90,6 @@ pub const right = Right
 pub const action_a = ActionA
 
 pub const action_b = ActionB
-
-pub type PadEventType {
-  PadDown
-  PadUp
-}
 
 pub type OnTick(a) =
   fn(a) -> a
@@ -126,47 +116,26 @@ const ms_per_second = 1000
 
 const event_polling_delay = 10
 
-// Shared representation behind World and MultiWorld. It is public only
-// inside this package so mworld can reuse it without exposing implementation
-// details to programs.
-@internal
-pub type BaseWorld(a, player) {
-  BaseWorld(
+pub opaque type World(a) {
+  World(
     state: a,
-    to_image: fn(a, player) -> Image,
+    to_image: ToImage(a),
     rate: Int,
-    min_players: Int,
-    max_players: Int,
-    players: List(player),
-    on_tick: Option(fn(a) -> a),
-    stop_when: Option(fn(a) -> Bool),
-    on_key_press: Option(fn(a, player, Key) -> a),
-    on_key_down: Option(fn(a, player, Key) -> a),
-    on_key_up: Option(fn(a, player, Key) -> a),
-    on_pad_down: Option(fn(a, player, PadInput) -> a),
-    on_pad_up: Option(fn(a, player, PadInput) -> a),
-    on_player_join: Option(fn(a, player) -> a),
-    on_player_leave: Option(fn(a, player) -> a),
+    on_tick: Option(OnTick(a)),
+    stop_when: Option(StopWhen(a)),
+    on_key_press: Option(OnKey(a)),
+    on_key_down: Option(OnKey(a)),
+    on_key_up: Option(OnKey(a)),
+    on_pad_down: Option(OnPad(a)),
+    on_pad_up: Option(OnPad(a)),
   )
 }
 
-@internal
-pub fn base_world(
-  state: a,
-  to_image: fn(a, player) -> Image,
-  min_players: Int,
-  max_players: Int,
-  players: List(player),
-) -> BaseWorld(a, player) {
-  let min_players = int.max(1, min_players)
-  let max_players = int.max(min_players, max_players)
-  BaseWorld(
+pub fn create(state: a, to_image: ToImage(a)) -> World(a) {
+  World(
     state:,
     to_image:,
     rate: default_tick_rate,
-    min_players:,
-    max_players:,
-    players:,
     on_tick: None,
     stop_when: None,
     on_key_press: None,
@@ -174,176 +143,172 @@ pub fn base_world(
     on_key_up: None,
     on_pad_down: None,
     on_pad_up: None,
-    on_player_join: None,
-    on_player_leave: None,
   )
 }
 
-pub opaque type World(a) {
-  World(BaseWorld(a, Nil))
-}
-
-pub fn create(state: a, to_image: ToImage(a)) -> World(a) {
-  World(base_world(state, fn(state, _player) { to_image(state) }, 1, 1, [Nil]))
-}
-
 pub fn tick_rate(world: World(a), rate: Int) -> World(a) {
-  let World(base) = world
-  World(BaseWorld(..base, rate: int.clamp(rate, min_tick_rate, max_tick_rate)))
+  World(..world, rate: int.clamp(rate, min_tick_rate, max_tick_rate))
 }
 
 pub fn on_tick(world: World(a), handler: OnTick(a)) -> World(a) {
-  let World(base) = world
-  World(BaseWorld(..base, on_tick: Some(handler)))
+  World(..world, on_tick: Some(handler))
 }
 
 pub fn stop_when(world: World(a), handler: StopWhen(a)) -> World(a) {
-  let World(base) = world
-  World(BaseWorld(..base, stop_when: Some(handler)))
+  World(..world, stop_when: Some(handler))
 }
 
 pub fn on_key_press(world: World(a), handler: OnKey(a)) -> World(a) {
-  let World(base) = world
-  let adapted = fn(state, _player, key) { handler(state, key) }
-  World(BaseWorld(..base, on_key_press: Some(adapted)))
+  World(..world, on_key_press: Some(handler))
 }
 
 pub fn on_key_down(world: World(a), handler: OnKey(a)) -> World(a) {
-  let World(base) = world
-  let adapted = fn(state, _player, key) { handler(state, key) }
-  World(BaseWorld(..base, on_key_down: Some(adapted)))
+  World(..world, on_key_down: Some(handler))
 }
 
 pub fn on_key_up(world: World(a), handler: OnKey(a)) -> World(a) {
-  let World(base) = world
-  let adapted = fn(state, _player, key) { handler(state, key) }
-  World(BaseWorld(..base, on_key_up: Some(adapted)))
+  World(..world, on_key_up: Some(handler))
 }
 
 pub fn on_pad_down(world: World(a), handler: OnPad(a)) -> World(a) {
-  let World(base) = world
-  let adapted = fn(state, _player, input) { handler(state, input) }
-  World(BaseWorld(..base, on_pad_down: Some(adapted)))
+  World(..world, on_pad_down: Some(handler))
 }
 
 pub fn on_pad_up(world: World(a), handler: OnPad(a)) -> World(a) {
-  let World(base) = world
-  let adapted = fn(state, _player, input) { handler(state, input) }
-  World(BaseWorld(..base, on_pad_up: Some(adapted)))
+  World(..world, on_pad_up: Some(handler))
 }
 
 pub fn run(world: World(a)) {
-  let World(base) = world
-  show_svg(base)
-  let period = ms_per_second / base.rate
-  run_loop(base, system.now_ms() + period)
+  show_svg(world)
+  let period = ms_per_second / world.rate
+  run_loop(world, system.now_ms() + period)
 }
 
-fn run_loop(base: BaseWorld(a, Nil), next_tick_at: Int) {
+type RuntimeEvent {
+  KeyPressInput(Key)
+  KeyDownInput(Key)
+  KeyUpInput(Key)
+  PadDownInput(PadInput)
+  PadUpInput(PadInput)
+  NoEvent
+}
+
+fn run_loop(world: World(a), next_tick_at: Int) {
   let now = system.now_ms()
-  let #(base, next_tick_at) = case now >= next_tick_at {
+  let #(world, next_tick_at) = case now >= next_tick_at {
     True -> {
-      let base = case base.on_tick {
+      let world = case world.on_tick {
         Some(on_tick) -> {
-          let base = BaseWorld(..base, state: on_tick(base.state))
-          show_svg(base)
-          base
+          let world = World(..world, state: on_tick(world.state))
+          show_svg(world)
+          world
         }
-        None -> base
+        None -> world
       }
       // Schedule from the deadline (not from now) to absorb minor
       // overruns without drift. If we overran by more than a full
       // period, snap forward so we don't burn ticks catching up.
-      let period = ms_per_second / base.rate
+      let period = ms_per_second / world.rate
       let bumped = next_tick_at + period
       let next = case bumped <= now {
         True -> now + period
         False -> bumped
       }
-      #(base, next)
+      #(world, next)
     }
-    False -> #(base, next_tick_at)
+    False -> #(world, next_tick_at)
   }
-  let event = get_key_event()
-  let #(base, h1) = case base.on_key_down, event {
-    Some(handler), Some(event) if event.event_type == KeyDown -> #(
-      BaseWorld(..base, state: handler(base.state, Nil, event.key)),
-      True,
-    )
-    _, _ -> #(base, False)
-  }
-  let #(base, h2) = case base.on_key_press, event {
-    Some(handler), Some(event) if event.event_type == KeyPress -> #(
-      BaseWorld(..base, state: handler(base.state, Nil, event.key)),
-      True,
-    )
-    _, _ -> #(base, False)
-  }
-  let #(base, h3) = case base.on_key_up, event {
-    Some(handler), Some(event) if event.event_type == KeyUp -> #(
-      BaseWorld(..base, state: handler(base.state, Nil, event.key)),
-      True,
-    )
-    _, _ -> #(base, False)
-  }
-  let event = get_pad_event()
-  let #(base, h4) = case base.on_pad_down, event {
-    Some(handler), Some(event) if event.event_type == PadDown -> #(
-      BaseWorld(..base, state: handler(base.state, Nil, event.input)),
-      True,
-    )
-    _, _ -> #(base, False)
-  }
-  let #(base, h5) = case base.on_pad_up, event {
-    Some(handler), Some(event) if event.event_type == PadUp -> #(
-      BaseWorld(..base, state: handler(base.state, Nil, event.input)),
-      True,
-    )
-    _, _ -> #(base, False)
-  }
-  case h1 || h2 || h3 || h4 || h5 {
-    True -> show_svg(base)
+  let #(world, handled) = apply_event(world, get_event())
+  case handled {
+    True -> show_svg(world)
     False -> Nil
   }
-  case base.stop_when |> option.map(fn(f) { f(base.state) }) {
-    Some(True) -> show_svg(base)
+  case world.stop_when |> option.map(fn(f) { f(world.state) }) {
+    Some(True) -> show_svg(world)
     _ -> {
       let wait = int.min(next_tick_at - system.now_ms(), event_polling_delay)
       case wait > 0 {
         True -> system.sleep(wait)
         False -> Nil
       }
-      run_loop(base, next_tick_at)
+      run_loop(world, next_tick_at)
     }
   }
 }
 
-fn show_svg(base: BaseWorld(a, Nil)) {
-  base.to_image(base.state, Nil) |> image.to_svg |> system.show_svg
-}
-
-fn get_key_event() -> Option(KeyEvent) {
-  case system.get_key_event() {
-    ["keypress", key, ..modifiers] ->
-      Some(new_key_event(KeyPress, key, modifiers))
-    ["keydown", key, ..modifiers] ->
-      Some(new_key_event(KeyDown, key, modifiers))
-    ["keyup", key, ..modifiers] -> Some(new_key_event(KeyUp, key, modifiers))
-    _ -> None
+fn apply_event(world: World(a), event: RuntimeEvent) -> #(World(a), Bool) {
+  case event {
+    KeyPressInput(key) -> apply_key_handler(world, key, world.on_key_press)
+    KeyDownInput(key) ->
+      apply_key_or_pad_handler(world, key, world.on_key_down, world.on_pad_down)
+    KeyUpInput(key) ->
+      apply_key_or_pad_handler(world, key, world.on_key_up, world.on_pad_up)
+    PadDownInput(input) -> apply_pad_handler(world, input, world.on_pad_down)
+    PadUpInput(input) -> apply_pad_handler(world, input, world.on_pad_up)
+    NoEvent -> #(world, False)
   }
 }
 
-fn get_pad_event() -> Option(PadEvent) {
-  case system.get_pad_event() {
-    ["paddown", input] ->
-      option.map(pad_input_from_string(input), fn(i) { PadEvent(PadDown, i) })
-    ["padup", input] ->
-      option.map(pad_input_from_string(input), fn(i) { PadEvent(PadUp, i) })
-    _ -> None
+fn apply_key_or_pad_handler(
+  world: World(a),
+  key: Key,
+  key_handler: Option(OnKey(a)),
+  pad_handler: Option(OnPad(a)),
+) -> #(World(a), Bool) {
+  case pad_input_from_key(key), pad_handler {
+    Some(input), Some(handler) -> #(
+      World(..world, state: handler(world.state, input)),
+      True,
+    )
+    _, _ -> apply_key_handler(world, key, key_handler)
   }
 }
 
-fn pad_input_from_string(input: String) -> Option(PadInput) {
+fn apply_key_handler(
+  world: World(a),
+  key: Key,
+  handler: Option(OnKey(a)),
+) -> #(World(a), Bool) {
+  case handler {
+    Some(handler) -> #(World(..world, state: handler(world.state, key)), True)
+    None -> #(world, False)
+  }
+}
+
+fn apply_pad_handler(
+  world: World(a),
+  input: PadInput,
+  handler: Option(OnPad(a)),
+) -> #(World(a), Bool) {
+  case handler {
+    Some(handler) -> #(World(..world, state: handler(world.state, input)), True)
+    None -> #(world, False)
+  }
+}
+
+fn show_svg(world: World(a)) {
+  world.state |> world.to_image |> image.to_svg |> system.show_svg
+}
+
+fn get_event() -> RuntimeEvent {
+  case system.get_event() {
+    ["keypress", _player, key, ..] -> KeyPressInput(key_from_string(key))
+    ["keydown", _player, key, ..] -> KeyDownInput(key_from_string(key))
+    ["keyup", _player, key, ..] -> KeyUpInput(key_from_string(key))
+    ["paddown", _player, input] ->
+      pad_input_from_string(input)
+      |> option.map(PadDownInput)
+      |> option.unwrap(NoEvent)
+    ["padup", _player, input] ->
+      pad_input_from_string(input)
+      |> option.map(PadUpInput)
+      |> option.unwrap(NoEvent)
+    _ -> NoEvent
+  }
+}
+
+@internal
+pub fn pad_input_from_string(input: String) -> Option(PadInput) {
   case input {
     "Up" -> Some(Up)
     "Down" -> Some(Down)
@@ -355,23 +320,21 @@ fn pad_input_from_string(input: String) -> Option(PadInput) {
   }
 }
 
-fn new_key_event(
-  event_type: KeyEventType,
-  key: String,
-  modifiers: List(String),
-) -> KeyEvent {
-  KeyEvent(
-    event_type,
-    key_from_string(key),
-    alt: list.contains(modifiers, "alt"),
-    ctrl: list.contains(modifiers, "ctrl"),
-    shift: list.contains(modifiers, "shift"),
-    meta: list.contains(modifiers, "meta"),
-    repeat: list.contains(modifiers, "repeat"),
-  )
+@internal
+pub fn pad_input_from_key(key: Key) -> Option(PadInput) {
+  case key {
+    ArrowUp | Char("w") | Char("W") -> Some(Up)
+    ArrowDown | Char("s") | Char("S") -> Some(Down)
+    ArrowLeft | Char("a") | Char("A") -> Some(Left)
+    ArrowRight | Char("d") | Char("D") -> Some(Right)
+    Char("z") | Char("Z") | Char("k") | Char("K") -> Some(ActionA)
+    Char("x") | Char("X") | Char("l") | Char("L") -> Some(ActionB)
+    _ -> None
+  }
 }
 
-fn key_from_string(key: String) -> Key {
+@internal
+pub fn key_from_string(key: String) -> Key {
   case key {
     "ArrowLeft" -> ArrowLeft
     "ArrowRight" -> ArrowRight

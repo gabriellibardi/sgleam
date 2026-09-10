@@ -56,34 +56,15 @@ function readCstr(exports: WasmExports, ptr: number): string {
 const KEYPRESS = 0;
 const KEYDOWN = 1;
 const KEYUP = 2;
-const KEYNONE = 3;
-const PADDOWN = 0;
-const PADUP = 1;
-const PADNONE = 2;
-const MWORLD_JOIN = 0;
-const MWORLD_LEAVE = 1;
-const MWORLD_TICK = 2;
-const MWORLD_KEYDOWN = 4;
-const MWORLD_PADDOWN = 6;
-const MWORLD_CLOSE = 8;
-const MWORLD_NONE = 9;
+const PADDOWN = 3;
+const PADUP = 4;
+const PLAYER_JOIN = 5;
+const PLAYER_LEAVE = 6;
+const TICK = 7;
+const CLOSE = 8;
+const EVENT_NONE = 9;
 
-interface EnvKeyEvent {
-  type: number;
-  key: string;
-  alt?: boolean;
-  ctrl?: boolean;
-  shift?: boolean;
-  meta?: boolean;
-  repeat?: boolean;
-}
-
-interface EnvPadEvent {
-  type: number;
-  input: string;
-}
-
-interface EnvMworldEvent {
+interface EnvEvent {
   type: number;
   player?: number;
   value?: string;
@@ -107,9 +88,7 @@ interface PlayerSvg {
 
 interface EnvOptions {
   interruptAfter?: number;
-  keyEvents?: EnvKeyEvent[];
-  padEvents?: EnvPadEvent[];
-  mworldEvents?: EnvMworldEvent[];
+  events?: EnvEvent[];
 }
 
 // Fake clock, advanced by sleep so the world loop's scheduling fires ticks
@@ -131,9 +110,7 @@ function makeEnv(
 ): WebAssembly.ModuleImports {
   let interruptCount = 0;
   const interruptAfter = options.interruptAfter ?? Infinity;
-  const keyEvents = [...(options.keyEvents ?? [])];
-  const padEvents = [...(options.padEvents ?? [])];
-  const mworldEvents = [...(options.mworldEvents ?? [])];
+  const events = [...(options.events ?? [])];
 
   return {
     check_interrupt: (): number => {
@@ -147,66 +124,15 @@ function makeEnv(
       const b = new Uint8Array(getBuffer() as ArrayBuffer);
       svgs.push(decoder.decode(b.slice(ptr, ptr + len)));
     },
-    get_key_event: (ptr: number, len: number, mods: number): number => {
-      const event = keyEvents.shift();
-      if (!event) {
-        return KEYNONE;
-      }
-      const b = new Uint8Array(getBuffer() as ArrayBuffer);
-      const key = encoder.encode(event.key);
-      const writeStart = Math.max(0, ptr);
-      const writeEnd = Math.min(b.length, ptr + Math.max(0, len));
-      if (writeStart < writeEnd) {
-        b.fill(0, writeStart, writeEnd);
-        const keyLen = Math.min(key.length, writeEnd - writeStart);
-        for (let i = 0; i < keyLen; i++) {
-          b[writeStart + i] = key[i];
-        }
-      }
-      if (mods >= 0 && mods + 4 < b.length) {
-        b[mods + 0] = event.alt ? 1 : 0;
-        b[mods + 1] = event.ctrl ? 1 : 0;
-        b[mods + 2] = event.shift ? 1 : 0;
-        b[mods + 3] = event.meta ? 1 : 0;
-        b[mods + 4] = event.repeat ? 1 : 0;
-      }
-      return event.type;
-    },
-    get_pad_event: (ptr: number, len: number): number => {
-      const event = padEvents.shift();
-      if (!event) {
-        return PADNONE;
-      }
-      const b = new Uint8Array(getBuffer() as ArrayBuffer);
-      const input = encoder.encode(event.input);
-      const writeStart = Math.max(0, ptr);
-      const writeEnd = Math.min(b.length, ptr + Math.max(0, len));
-      if (writeStart < writeEnd) {
-        b.fill(0, writeStart, writeEnd);
-        b.set(input.subarray(0, writeEnd - writeStart), writeStart);
-      }
-      return event.type;
-    },
-    start_mworld: (
-      minPlayers: bigint,
-      maxPlayers: bigint,
-      tickRate: bigint,
-    ): void => {
-      mworldStarts.push({
-        minPlayers: Number(minPlayers),
-        maxPlayers: Number(maxPlayers),
-        tickRate: Number(tickRate),
-      });
-    },
-    get_mworld_event: (
+    get_event: (
       playerPtr: number,
       valuePtr: number,
       valueLen: number,
       mods: number,
     ): number => {
-      const event = mworldEvents.shift();
+      const event = events.shift();
       if (!event) {
-        return MWORLD_NONE;
+        return EVENT_NONE;
       }
       const buffer = getBuffer() as ArrayBuffer;
       const b = new Uint8Array(buffer);
@@ -233,6 +159,17 @@ function makeEnv(
         b[mods + 4] = event.repeat ? 1 : 0;
       }
       return event.type;
+    },
+    start_mworld: (
+      minPlayers: bigint,
+      maxPlayers: bigint,
+      tickRate: bigint,
+    ): void => {
+      mworldStarts.push({
+        minPlayers: Number(minPlayers),
+        maxPlayers: Number(maxPlayers),
+        tickRate: Number(tickRate),
+      });
     },
     draw_player_svg: (player: bigint, ptr: number, len: number): void => {
       const b = new Uint8Array(getBuffer() as ArrayBuffer);
@@ -278,9 +215,7 @@ interface WasmContext {
 interface LoadOptions {
   bigint?: boolean;
   interruptAfter?: number;
-  keyEvents?: EnvKeyEvent[];
-  padEvents?: EnvPadEvent[];
-  mworldEvents?: EnvMworldEvent[];
+  events?: EnvEvent[];
 }
 
 async function loadWasm(options: LoadOptions = {}): Promise<WasmContext> {
@@ -321,9 +256,7 @@ async function loadWasm(options: LoadOptions = {}): Promise<WasmContext> {
     clock,
     {
       interruptAfter: options.interruptAfter,
-      keyEvents: options.keyEvents,
-      padEvents: options.padEvents,
-      mworldEvents: options.mworldEvents,
+      events: options.events,
     },
   );
 
@@ -560,11 +493,31 @@ fn handler(name: String) -> fn(Int, world.PadInput) -> Int {
 }
 `;
 
+const PAD_MAPPINGS = `import gleam/io
+import gleam/string
+import sgleam/image
+import sgleam/stroke
+import sgleam/world
+
+pub fn main() {
+  world.create(0, draw)
+  |> world.on_pad_down(fn(handled, input) {
+    io.println(string.inspect(input))
+    handled + 1
+  })
+  |> world.stop_when(fn(handled) { handled == 12 })
+  |> world.run()
+}
+
+pub fn draw(_handled: Int) -> image.Image {
+  image.circle(20, stroke.red)
+}
+`;
+
 const MWORLD_SQUARES = `import gleam/io
 import sgleam/fill
 import sgleam/image
 import sgleam/mworld
-import sgleam/world
 
 pub type State {
   State(left_x: Int, right_x: Int, ticks: Int)
@@ -577,7 +530,6 @@ pub fn main() {
     io.println("tick")
     State(..state, ticks: state.ticks + 1)
   })
-  |> mworld.on_key_down(move_with_key)
   |> mworld.on_pad_down(move_with_pad)
   |> mworld.stop_when(fn(state) { state.left_x == 90 })
   |> mworld.run()
@@ -599,17 +551,7 @@ pub fn move_with_pad(
 ) -> State {
   case mworld.player_index(player), input {
     1, input if input == mworld.left -> State(..state, left_x: 90)
-    _, _ -> state
-  }
-}
-
-pub fn move_with_key(
-  state: State,
-  player: mworld.Player,
-  key: mworld.Key,
-) -> State {
-  case mworld.player_index(player), key {
-    2, world.ArrowLeft -> State(..state, right_x: 190)
+    2, input if input == mworld.left -> State(..state, right_x: 190)
     _, _ -> state
   }
 }
@@ -863,10 +805,10 @@ Deno.test("world.run does not crash (sleep regression)", async () => {
 Deno.test("on_key_press and on_key_up take their own events", async () => {
   const ctx = await newRepl(KEY_HANDLERS, {
     interruptAfter: 200_000,
-    keyEvents: [
-      { type: KEYDOWN, key: "ArrowLeft" },
-      { type: KEYPRESS, key: "a" },
-      { type: KEYUP, key: "Enter" },
+    events: [
+      { type: KEYDOWN, value: "ArrowLeft" },
+      { type: KEYPRESS, value: "a" },
+      { type: KEYUP, value: "Enter" },
     ],
   });
   const r = run(ctx, "main()");
@@ -881,7 +823,7 @@ Deno.test("every key name decodes to its Key", async () => {
   const keys = [...KEY_NAMES, "a"];
   const ctx = await newRepl(keyNamesProgram(keys.length), {
     interruptAfter: 200_000,
-    keyEvents: keys.map((key) => ({ type: KEYDOWN, key })),
+    events: keys.map((value) => ({ type: KEYDOWN, value })),
   });
   const r = run(ctx, "main()");
   const expected = [...KEY_NAMES, 'Char("a")', "Nil"]
@@ -891,12 +833,12 @@ Deno.test("every key name decodes to its Key", async () => {
   destroy(ctx);
 });
 
-Deno.test("on_pad_down and on_pad_up take their own events", async () => {
+Deno.test("pad handlers accept pad and mapped keyboard events", async () => {
   const ctx = await newRepl(PAD_HANDLERS, {
     interruptAfter: 200_000,
-    padEvents: [
-      { type: PADDOWN, input: "Left" },
-      { type: PADUP, input: "ActionA" },
+    events: [
+      { type: PADDOWN, value: "Left" },
+      { type: KEYUP, value: "k" },
     ],
   });
   const r = run(ctx, "main()");
@@ -906,25 +848,53 @@ Deno.test("on_pad_down and on_pad_up take their own events", async () => {
   destroy(ctx);
 });
 
+Deno.test("keyboard controls use the standard pad mapping", async () => {
+  const values = [
+    "ArrowUp",
+    "w",
+    "ArrowDown",
+    "s",
+    "ArrowLeft",
+    "a",
+    "ArrowRight",
+    "d",
+    "z",
+    "k",
+    "x",
+    "l",
+  ];
+  const ctx = await newRepl(PAD_MAPPINGS, {
+    interruptAfter: 200_000,
+    events: values.map((value) => ({ type: KEYDOWN, value })),
+  });
+  const r = run(ctx, "main()");
+  assertEquals(
+    r.stdout,
+    "Up\nUp\nDown\nDown\nLeft\nLeft\nRight\nRight\n" +
+      "ActionA\nActionA\nActionB\nActionB\nNil\n",
+  );
+  destroy(ctx);
+});
+
 Deno.test("mworld shares state and renders a view per player", async () => {
   const ctx = await newRepl(MWORLD_SQUARES, {
     interruptAfter: 200_000,
-    mworldEvents: [
-      { type: MWORLD_JOIN, player: 1 },
+    events: [
+      { type: PLAYER_JOIN, player: 1 },
       // A tick before min_players is reached must not change the state.
-      { type: MWORLD_TICK },
-      { type: MWORLD_JOIN, player: 2 },
-      { type: MWORLD_TICK },
+      { type: TICK },
+      { type: PLAYER_JOIN, player: 2 },
+      { type: TICK },
       {
-        type: MWORLD_KEYDOWN,
+        type: KEYDOWN,
         player: 2,
         value: "ArrowLeft",
         shift: true,
       },
       // An input cannot act as a player that has not joined.
-      { type: MWORLD_KEYDOWN, player: 3, value: "ArrowLeft" },
-      { type: MWORLD_PADDOWN, player: 1, value: "Left" },
-      { type: MWORLD_CLOSE },
+      { type: KEYDOWN, player: 3, value: "ArrowLeft" },
+      { type: PADDOWN, player: 1, value: "Left" },
+      { type: CLOSE },
     ],
   });
   assertEquals(
@@ -948,7 +918,7 @@ Deno.test("mworld shares state and renders a view per player", async () => {
   assertEquals(
     ctx.playerSvgs[4].svg !== ctx.playerSvgs[6].svg,
     true,
-    "expected player 2's key event to update the shared world",
+    "expected a mapped key to update the shared world through the pad handler",
   );
   assertEquals(
     ctx.playerSvgs[7].svg !== ctx.playerSvgs[8].svg,
@@ -961,11 +931,11 @@ Deno.test("mworld shares state and renders a view per player", async () => {
 Deno.test("mworld handles join, leave, and close", async () => {
   const ctx = await newRepl(MWORLD_LIFECYCLE, {
     interruptAfter: 200_000,
-    mworldEvents: [
-      { type: MWORLD_JOIN, player: 1 },
-      { type: MWORLD_JOIN, player: 2 },
-      { type: MWORLD_LEAVE, player: 1 },
-      { type: MWORLD_CLOSE },
+    events: [
+      { type: PLAYER_JOIN, player: 1 },
+      { type: PLAYER_JOIN, player: 2 },
+      { type: PLAYER_LEAVE, player: 1 },
+      { type: CLOSE },
     ],
   });
   const r = run(ctx, "main()");
@@ -1166,13 +1136,13 @@ Deno.test("move_square survives many frames", async () => {
   // handlers run. Feed ArrowRight events (move clamps, so the square
   // sits at the right edge after a few presses without triggering
   // stop_when). Each press renders, so N events => N frames.
-  const keyEvents = Array.from({ length: 150 }, () => ({
+  const events = Array.from({ length: 150 }, () => ({
     type: KEYDOWN,
-    key: "ArrowRight",
+    value: "ArrowRight",
   }));
   const ctx = await newRepl(MOVE_SQUARE, {
     interruptAfter: 15_000,
-    keyEvents,
+    events,
   });
   assertEquals(ctx.repl !== 0, true);
   const r = run(ctx, "main()");

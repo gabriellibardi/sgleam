@@ -34,21 +34,15 @@ pub use target::text_metrics;
 #[cfg(target_arch = "wasm32")]
 pub use target::draw_svg;
 
-/// `system.get_pad_event` gives the kind of the virtual pad event and its
-/// input, or nothing when no event waits.
+/// `system.get_event` gives the next keyboard, pad or multiplayer lifecycle
+/// event waiting in the host queue. Only the browser supplies these events.
 #[cfg(target_arch = "wasm32")]
-pub use target::get_pad_event;
-
-/// `system.get_key_event` gives the kind of the event waiting in the page, the
-/// name of the key and the modifiers that are on, or nothing when no event
-/// waits. Only the browser reads keys, so a native run has no such function.
-#[cfg(target_arch = "wasm32")]
-pub use target::get_key_event;
+pub use target::get_event;
 
 /// Host operations used by a multiplayer world. The host owns the ordered
 /// event queue and receives one SVG for each player's view.
 #[cfg(target_arch = "wasm32")]
-pub use target::{draw_player_svg, get_mworld_event, start_mworld, stop_mworld};
+pub use target::{draw_player_svg, start_mworld, stop_mworld};
 
 #[cfg(target_arch = "wasm32")]
 #[path = "host/wasm.rs"]

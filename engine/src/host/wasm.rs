@@ -10,30 +10,19 @@ mod ffi {
         pub fn sleep(ms: u64);
         pub fn draw_svg(str: *const u8, len: usize);
 
-        /// Returns the kind of the event waiting in the page, as an index
-        /// into keypress, keydown and keyup. Any other value says that no
-        /// event waits. Writes the name of the key into `key`, at most `len`
-        /// bytes of it, and one bool per modifier into `modifiers`, which
-        /// holds five, in the order alt, ctrl, shift, meta and repeat.
-        pub fn get_key_event(key: *mut u8, len: usize, modifiers: *mut bool) -> usize;
-
-        /// Returns the kind of the virtual pad event as an index into
-        /// paddown and padup. Any other value says that no event waits.
-        /// Writes the name of the input into `input`, at most `len` bytes.
-        pub fn get_pad_event(input: *mut u8, len: usize) -> usize;
-
-        /// Announces the limits and requested tick rate of a multiplayer
-        /// world. The host remains responsible for scheduling tick events.
-        pub fn start_mworld(min_players: u64, max_players: u64, tick_rate: u64);
-
-        /// Dequeues one ordered multiplayer event. Event kinds are join,
-        /// leave, tick, keypress, keydown, keyup, paddown, padup and close.
-        pub fn get_mworld_event(
+        /// Dequeues one event. Event kinds are keypress, keydown, keyup,
+        /// paddown, padup, join, leave, tick and close. Writes the player,
+        /// event value and keyboard modifiers into the supplied buffers.
+        pub fn get_event(
             player: *mut u64,
             value: *mut u8,
             value_len: usize,
             modifiers: *mut bool,
         ) -> usize;
+
+        /// Announces the limits and requested tick rate of a multiplayer
+        /// world. The host remains responsible for scheduling tick events.
+        pub fn start_mworld(min_players: u64, max_players: u64, tick_rate: u64);
 
         /// Sends one player's view of the current world to the host.
         pub fn draw_player_svg(player: u64, svg: *const u8, svg_len: usize);
@@ -81,60 +70,14 @@ pub fn draw_svg(str: String) {
     unsafe { ffi::draw_svg(str.as_ptr(), str.len()) }
 }
 
-/// The kind first, then the name of the key, then one name per modifier that
-/// is on.
-pub fn get_key_event() -> Vec<String> {
-    let mut key = [0u8; 32];
-    let mut modifiers = [false; 5];
-    let result = unsafe { ffi::get_key_event(key.as_mut_ptr(), key.len(), modifiers.as_mut_ptr()) };
-    let Some(type_) = ["keypress", "keydown", "keyup"].get(result) else {
-        return vec![];
-    };
-    let mut ret = vec![
-        (*type_).into(),
-        String::from_utf8_lossy(&key)
-            .trim_matches(char::from(0))
-            .to_string(),
-    ];
-    for (on, key) in modifiers
-        .iter()
-        .zip(&["alt", "ctrl", "shift", "meta", "repeat"])
-    {
-        if *on {
-            ret.push((*key).into())
-        }
-    }
-    ret
-}
-
-/// The kind of the virtual pad event waiting in the page and the name of its
-/// input, or nothing at all when the page has no event.
-pub fn get_pad_event() -> Vec<String> {
-    let mut input = [0u8; 32];
-    let result = unsafe { ffi::get_pad_event(input.as_mut_ptr(), input.len()) };
-    let Some(type_) = ["paddown", "padup"].get(result) else {
-        return vec![];
-    };
-    vec![
-        (*type_).into(),
-        String::from_utf8_lossy(&input)
-            .trim_matches(char::from(0))
-            .to_string(),
-    ]
-}
-
-pub fn start_mworld(min_players: u64, max_players: u64, tick_rate: u64) {
-    unsafe { ffi::start_mworld(min_players, max_players, tick_rate) }
-}
-
-/// One event from the host-controlled multiplayer queue, represented in the
-/// string-list shape consumed by `sgleam/mworld`.
-pub fn get_mworld_event() -> Vec<String> {
+/// One event from the host-controlled queue, represented in the string-list
+/// shape consumed by `sgleam/world` and `sgleam/mworld`.
+pub fn get_event() -> Vec<String> {
     let mut player = 0u64;
     let mut value = [0u8; 32];
     let mut modifiers = [false; 5];
     let result = unsafe {
-        ffi::get_mworld_event(
+        ffi::get_event(
             &mut player,
             value.as_mut_ptr(),
             value.len(),
@@ -142,23 +85,23 @@ pub fn get_mworld_event() -> Vec<String> {
         )
     };
     let Some(type_) = [
-        "join", "leave", "tick", "keypress", "keydown", "keyup", "paddown", "padup", "close",
+        "keypress", "keydown", "keyup", "paddown", "padup", "join", "leave", "tick", "close",
     ]
     .get(result) else {
         return vec![];
     };
-    if matches!(result, 2 | 8) {
+    if matches!(result, 7 | 8) {
         return vec![(*type_).into()];
     }
     let mut event = vec![(*type_).into(), player.to_string()];
-    if result >= 3 {
+    if result <= 4 {
         event.push(
             String::from_utf8_lossy(&value)
                 .trim_matches(char::from(0))
                 .to_string(),
         );
     }
-    if matches!(result, 3..=5) {
+    if result <= 2 {
         for (on, modifier) in modifiers
             .iter()
             .zip(&["alt", "ctrl", "shift", "meta", "repeat"])
@@ -169,6 +112,10 @@ pub fn get_mworld_event() -> Vec<String> {
         }
     }
     event
+}
+
+pub fn start_mworld(min_players: u64, max_players: u64, tick_rate: u64) {
+    unsafe { ffi::start_mworld(min_players, max_players, tick_rate) }
 }
 
 pub fn draw_player_svg(player: u64, svg: String) {
