@@ -161,12 +161,12 @@ Tecla solta.
 ```gleam
 world.on_pad_down(world, fn(a, PadInput) -> a)
 ```
-Botão do pad pressionado.
+Botão do pad pressionado ou tecla equivalente pressionada.
 
 ```gleam
 world.on_pad_up(world, fn(a, PadInput) -> a)
 ```
-Botão do pad solto.
+Botão do pad solto ou tecla equivalente solta.
 
 ### Execução
 
@@ -198,6 +198,23 @@ O tipo `world.PadInput`{.gleam} oferece `Up`{.gleam}, `Down`{.gleam},
 `world.action_a`{.gleam} e `world.action_b`{.gleam} representam as mesmas
 entradas.
 
+Use os eventos de teclado quando o jogo deve depender de teclas específicas.
+Para um jogo controlável tanto pelo teclado quanto pelo pad virtual, implemente
+somente os eventos do pad. O sgleam aplica este mapeamento padrão:
+
+| Entrada do pad | Teclas equivalentes |
+|----------------|---------------------|
+| `Up`{.gleam} | seta para cima, W |
+| `Down`{.gleam} | seta para baixo, S |
+| `Left`{.gleam} | seta para a esquerda, A |
+| `Right`{.gleam} | seta para a direita, D |
+| `ActionA`{.gleam} | Z, K |
+| `ActionB`{.gleam} | X, L |
+
+Quando há um handler de pad compatível, uma tecla mapeada é entregue a ele em
+vez do handler de teclado. Teclas sem mapeamento continuam sendo entregues aos
+handlers de teclado. O teclado numérico ainda não faz parte do mapeamento.
+
 
 ## Mundos multijogador
 
@@ -217,17 +234,12 @@ pub fn main() {
     max: 4,
     to_image: desenhar,
   )
-  |> mworld.on_key_down(tecla)
   |> mworld.on_pad_down(pad)
   |> mworld.run()
 }
 
 fn desenhar(estado, jogador: mworld.Player) -> image.Image {
   // Pode usar mworld.player_index(jogador) para escolher a perspectiva.
-  todo
-}
-
-fn tecla(estado, jogador: mworld.Player, tecla: mworld.Key) {
   todo
 }
 
@@ -244,4 +256,5 @@ Use `mworld.player_index`{.gleam} para obter o índice estável de um jogador e
 
 No modo multijogador, o host controla a fila ordenada de eventos, informa
 entradas e conexões e envia os ticks ao mundo. O jogo devolve ao host um SVG
-para cada jogador conectado sempre que o estado muda.
+para cada jogador conectado sempre que o estado muda. O mesmo mapeamento de
+teclado para pad também vale para `mworld`{.gleam}.

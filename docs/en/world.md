@@ -161,12 +161,12 @@ Key released.
 ```gleam
 world.on_pad_down(world, fn(a, PadInput) -> a)
 ```
-Pad button pressed.
+Pad button or equivalent keyboard key pressed.
 
 ```gleam
 world.on_pad_up(world, fn(a, PadInput) -> a)
 ```
-Pad button released.
+Pad button or equivalent keyboard key released.
 
 ### Execution
 
@@ -198,6 +198,23 @@ The `world.PadInput`{.gleam} type provides `Up`{.gleam}, `Down`{.gleam},
 `world.action_a`{.gleam}, and `world.action_b`{.gleam} represent the same
 inputs.
 
+Use keyboard events when a game should depend on specific keys. To make a game
+controllable with either the keyboard or the virtual pad, implement only the
+pad events. Sgleam applies this standard mapping:
+
+| Pad input | Equivalent keys |
+|-----------|-----------------|
+| `Up`{.gleam} | up arrow, W |
+| `Down`{.gleam} | down arrow, S |
+| `Left`{.gleam} | left arrow, A |
+| `Right`{.gleam} | right arrow, D |
+| `ActionA`{.gleam} | Z, K |
+| `ActionB`{.gleam} | X, L |
+
+When a matching pad handler is present, a mapped key is delivered to it instead
+of the keyboard handler. Unmapped keys continue to reach keyboard handlers. The
+numeric keypad is not part of the mapping yet.
+
 
 ## Multiplayer worlds
 
@@ -216,17 +233,12 @@ pub fn main() {
     max: 4,
     to_image: draw,
   )
-  |> mworld.on_key_down(key)
   |> mworld.on_pad_down(pad)
   |> mworld.run()
 }
 
 fn draw(state, player: mworld.Player) -> image.Image {
   // mworld.player_index(player) can select the player's perspective.
-  todo
-}
-
-fn key(state, player: mworld.Player, key: mworld.Key) {
   todo
 }
 
@@ -243,4 +255,5 @@ state. `mworld.on_player_join`{.gleam} and
 
 In multiplayer mode the host controls the ordered event queue, reports input
 and connection events, and sends ticks to the world. Whenever state changes,
-the game sends the host one SVG for each connected player.
+the game sends the host one SVG for each connected player. The same keyboard to
+pad mapping also applies to `mworld`{.gleam}.
